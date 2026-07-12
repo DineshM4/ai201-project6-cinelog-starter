@@ -34,5 +34,5 @@
 **How I resolved it:** Kept main's UUID versions of `Film` and `CollectionEntry`, and re-added `WatchlistEntry` with `film_id` as a `String(36)` UUID instead of `Integer`, plus fixed the leftover integer references in the watchlist docstrings.
 **How I verified no conflict remains:** `git log --merges origin/main..HEAD` is empty (linear history, no merge commits), all 5 tests pass, and I ran the add/dedup/not-found/view flow end-to-end with real UUIDs.
 
-## PR Description
-<!-- Written at the end — feature overview, design decisions, manual testing steps -->
+## Git Log
+![alt text](image-1.png)
