@@ -36,3 +36,84 @@
 
 ## Git Log
 ![alt text](image-1.png)
+
+## PR description
+
+Adds a **watchlist** — a per-user list of films saved to watch later, kept separate from the existing *collection* (films already watched). It ships a `WatchlistEntry` model and two endpoints:
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `POST` | `/watchlist/<user_id>/add` | Add a film to a user's watchlist. Body: `{ "film_id": "<uuid>" }` |
+| `GET`  | `/watchlist/<user_id>` | Return the user's watchlist, newest first |
+
+Behavior:
+- **Add** returns `201` with the new entry. Adding a nonexistent `film_id` returns `404` (`FilmNotFoundError`); a missing `film_id` in the body returns `400`.
+- **Deduplication** — adding a film already on the user's watchlist returns `409` (`AlreadyInWatchlistError`) instead of creating a second row.
+- **View** returns each film's data plus its `date_added` and `public` flag.
+
+### Design decisions
+
+**1. Visibility default — `public=True`.** New watchlist entries are public by default. CineLog is a social film app, so saving a film is an implicitly social act (the same reason Letterboxd defaults watchlists to public), and public-by-default is what feeds discovery and the follow graph. The tradeoff is a less privacy-conservative default: an entry is visible until the user flips the flag. I accept that here because the data is low-sensitivity (films you *want* to watch) and only because `public` is editable at add-time — for anything more sensitive I'd flip to private-by-default.
+
+**2. Sort order — newest first (`date_added.desc()`).** `get_watchlist()` orders by date added, descending. A watchlist is a record of intent captured over time, not a reference table you look titles up in — and on CineLog that intent is discovery-driven (users add films reacting to the feed). Date-added preserves that story; alphabetical would float "Amélie" above a film you added tonight and actually want to watch. Accepted costs of newest-first: it buries long-standing intent, and it loses alphabetical's findability ("did I already add this?"). If those bite, the clean next step is a `?sort=` query param defaulting to date-desc — flagged, not shipped here.
+
+### How to test manually
+
+The app has no film/user creation endpoint and starts with an empty DB, so seed one user and two films first.
+
+1. **Start the app** (creates `cinelog.db`):
+   ```bash
+   pip install -r requirements.txt
+   python app.py     # runs on http://localhost:5000
+   ```
+
+2. **Seed a user and two films** — in a second terminal:
+   ```bash
+   python3 -c "
+   from app import create_app, db
+   from models import User, Film
+   app = create_app()
+   with app.app_context():
+       u = User(username='ada', email='ada@example.com')
+       f1 = Film(title='Whiplash', year=2014)
+       f2 = Film(title='Amélie', year=2001)
+       db.session.add_all([u, f1, f2]); db.session.commit()
+       print('USER_ID =', u.id)
+       print('FILM1_ID =', f1.id)
+       print('FILM2_ID =', f2.id)
+   "
+   ```
+   Copy the three IDs it prints.
+
+3. **Add a film** → expect `201` and a JSON entry with `"public": true`:
+   ```bash
+   curl -i -X POST http://localhost:5000/watchlist/<USER_ID>/add \
+     -H "Content-Type: application/json" -d '{"film_id": "<FILM1_ID>"}'
+   ```
+
+4. **Deduplication** — run the exact same command again → expect `409` (`already in this user's watchlist`).
+
+5. **Nonexistent film** → expect `404`:
+   ```bash
+   curl -i -X POST http://localhost:5000/watchlist/<USER_ID>/add \
+     -H "Content-Type: application/json" -d '{"film_id": "does-not-exist"}'
+   ```
+
+6. **Missing field** → expect `400`:
+   ```bash
+   curl -i -X POST http://localhost:5000/watchlist/<USER_ID>/add \
+     -H "Content-Type: application/json" -d '{}'
+   ```
+
+7. **Sort order** — add the second film, then view the list:
+   ```bash
+   curl -s -X POST http://localhost:5000/watchlist/<USER_ID>/add \
+     -H "Content-Type: application/json" -d '{"film_id": "<FILM2_ID>"}'
+   curl -s http://localhost:5000/watchlist/<USER_ID>
+   ```
+   Expect **Amélie first** (added most recently), then Whiplash — confirming newest-first.
+
+8. **Automated tests**:
+   ```bash
+   pytest tests/test_watchlist.py -v   # 1 passed
+   ```
